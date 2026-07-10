@@ -5,6 +5,19 @@ import cron from 'node-cron';
 import { getAiResponse, getVisionDescription } from './services/ai.js';
 import { getChatHistory, saveChatHistory, createOrder, getOrdersForFollowUp, markOrderFollowedUp, getCustomerByPhone } from './services/db.js';
 import { useSupabaseAuthState } from './services/authState.js';
+import express from 'express';
+
+// Setup Express server to keep Render instance awake
+const app = express();
+const port = process.env.PORT || 3000;
+
+app.get('/', (req, res) => {
+    res.send('WhatsApp Bot is running!');
+});
+
+app.listen(port, () => {
+    console.log(`Web server listening on port ${port}`);
+});
 
 // Store muted users (phone number -> timestamp when mute expires)
 const mutedUsers = new Map();

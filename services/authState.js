@@ -70,15 +70,35 @@ export const useSupabaseAuthState = async () => {
                     return data;
                 },
                 set: async (data) => {
-                    const tasks = [];
+                    const upserts = [];
+                    const deletes = [];
+                    
                     for (const category in data) {
                         for (const id in data[category]) {
                             const value = data[category][id];
                             const key = `${category}-${id}`;
-                            tasks.push(value ? writeData(value, key) : removeData(key));
+                            if (value) {
+                                const stringified = JSON.stringify(value, BufferJSON.replacer);
+                                upserts.push({ id: key, data: JSON.parse(stringified) });
+                            } else {
+                                deletes.push(key);
+                            }
                         }
                     }
-                    await Promise.all(tasks);
+                    
+                    try {
+                        if (upserts.length > 0) {
+                            const { error } = await supabase.from('baileys_auth').upsert(upserts);
+                            if (error) console.error('Error in batch upsert:', error);
+                        }
+                        
+                        if (deletes.length > 0) {
+                            const { error } = await supabase.from('baileys_auth').delete().in('id', deletes);
+                            if (error) console.error('Error in batch delete:', error);
+                        }
+                    } catch (err) {
+                        console.error('Network error during batch auth state update:', err);
+                    }
                 }
             }
         },
