@@ -436,3 +436,55 @@ export async function getAiResponse(message, history, onOrderCreated, pushName =
 
   return "Samawenna, podi technical awulak. Tikakin try karanna. 🙏";
 }
+
+/**
+ * Smart Broadcast: Use AI to pick ideal customers for an offer and generate personalized messages
+ */
+export async function getSmartBroadcastTargets(offerText, customers) {
+  try {
+    const customerData = JSON.stringify(customers, null, 2);
+
+    const prompt = `You are a smart marketing AI for a Sri Lankan online shop called Lovzmart.
+
+Here is an offer the admin wants to broadcast:
+"${offerText}"
+
+Here is the customer data (phone_number, name, order history, and recent chat summary):
+${customerData}
+
+Your job:
+1. Analyze each customer's purchase history and chat summary.
+2. Select ONLY the customers who would most likely be interested in this specific offer.
+3. For each selected customer, write a SHORT, friendly, personalized WhatsApp message in Singlish (mix of Sinhala words + English) mentioning their name if possible.
+4. The message should feel personal, NOT like a mass spam. Max 3 sentences.
+
+Return ONLY a valid JSON array, no explanation, no markdown. Format:
+[
+  {
+    "phone_number": "94771234567",
+    "message": "Ayubowan [Name]! 🎉 ..."
+  }
+]
+
+If no customers match, return an empty array: []`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.0-flash',
+      contents: [{ role: 'user', parts: [{ text: prompt }] }]
+    });
+
+    const raw = response.text.trim().replace(/```json|```/g, '').trim();
+    const targets = JSON.parse(raw);
+    console.log(`✅ Smart Broadcast: AI selected ${targets.length} target customers.`);
+    return targets;
+
+  } catch (error) {
+    console.error('❌ Smart broadcast AI failed:', error.message);
+    // Fallback: send to all customers with a generic message
+    return customers.map(c => ({
+      phone_number: c.phone_number,
+      message: `Ayubowan ${c.name}! 🎉 Lovzmart eken special offer ekak: ${offerText} Hurry, limited stock! 🛒`
+    }));
+  }
+}
+

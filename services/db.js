@@ -194,3 +194,78 @@ export async function markOrderFollowedUp(orderId) {
     console.error('Error updating order status for follow-up:', error);
   }
 }
+
+/**
+ * Get all customers with their order history and recent chat - for smart broadcast targeting
+ */
+export async function getAllCustomersWithHistory() {
+  try {
+    // Get all customers
+    const { data: customers, error: custError } = await supabase
+      .from('customers')
+      .select('phone_number, name');
+    if (custError) throw custError;
+
+    // Get all orders grouped
+    const { data: orders, error: ordError } = await supabase
+      .from('orders')
+      .select('customer_phone, status, created_at');
+    if (ordError) throw ordError;
+
+    // Get all chat sessions (last message summary)
+    const { data: chats, error: chatError } = await supabase
+      .from('chat_sessions')
+      .select('phone_number, history');
+    if (chatError) throw chatError;
+
+    // Build enriched customer list
+    const enriched = (customers || []).map(c => {
+      const myOrders = (orders || []).filter(o => o.customer_phone === c.phone_number);
+      const myChat = (chats || []).find(ch => ch.phone_number === c.phone_number);
+      
+      // Get last few chat messages as summary
+      const chatSummary = myChat?.history
+        ? myChat.history.slice(-6).map(h => `${h.role}: ${h.content}`).join(' | ')
+        : '';
+
+      return {
+        phone_number: c.phone_number,
+        name: c.name || 'Customer',
+        order_count: myOrders.length,
+        last_order_status: myOrders[myOrders.length - 1]?.status || 'none',
+        chat_summary: chatSummary.substring(0, 500) // limit size
+      };
+    });
+
+    return enriched;
+  } catch (error) {
+    console.error('Error fetching customers with history:', error);
+    return [];
+  }
+}
+
+/**
+ * Save a broadcast campaign record
+ */
+export async function saveBroadcast(offerText, targetCount) {
+  const { data, error } = await supabase
+    .from('broadcasts')
+    .insert({ offer_text: offerText, target_count: targetCount, status: 'sending' })
+    .select()
+    .single();
+  if (error) {
+    console.error('Error saving broadcast:', error);
+    return null;
+  }
+  return data;
+}
+
+/**
+ * Update broadcast sent count and status
+ */
+export async function updateBroadcastStatus(broadcastId, sentCount) {
+  await supabase
+    .from('broadcasts')
+    .update({ sent_count: sentCount, status: 'done' })
+    .eq('id', broadcastId);
+}

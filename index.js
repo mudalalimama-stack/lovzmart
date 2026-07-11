@@ -3,8 +3,9 @@ import pino from 'pino';
 import qrcode from 'qrcode-terminal';
 import cron from 'node-cron';
 import { getAiResponse, getVisionDescription } from './services/ai.js';
-import { getChatHistory, saveChatHistory, createOrder, getOrdersForFollowUp, markOrderFollowedUp, getCustomerByPhone } from './services/db.js';
+import { getChatHistory, saveChatHistory, createOrder, getOrdersForFollowUp, markOrderFollowedUp, getCustomerByPhone, getAllCustomersWithHistory, saveBroadcast, updateBroadcastStatus } from './services/db.js';
 import { useSupabaseAuthState } from './services/authState.js';
+import { getSmartBroadcastTargets } from './services/ai.js';
 import express from 'express';
 
 // Setup Express server to keep Render instance awake
@@ -91,6 +92,94 @@ async function connectToWhatsApp() {
         const remoteJid = msg.key.remoteJid;
         const phoneNumber = remoteJid.split('@')[0];
         const pushName = msg.pushName || 'Customer';
+
+        // Extract text depending on message type
+        let text = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
+
+        // ====== ADMIN COMMANDS (only from admin number) ======
+        const ADMIN_NUMBER = process.env.ADMIN_PHONE; // e.g. 94771234567
+        if (ADMIN_NUMBER && phoneNumber === ADMIN_NUMBER) {
+            if (text.startsWith('!broadcast ')) {
+                const offerText = text.replace('!broadcast ', '').trim();
+                await sock.sendMessage(remoteJid, { text: `🔄 Smart Broadcast processing...
+
+AI offer eka analyze karanawa saha ideal customers select karanawa. Tikakin wait karanna!` });
+
+                try {
+                    // 1. Get all customers with their history
+                    const customers = await getAllCustomersWithHistory();
+                    if (customers.length === 0) {
+                        await sock.sendMessage(remoteJid, { text: '⚠️ Database eke customers nemei. Bot eka use karama customers add wenawa.' });
+                        return;
+                    }
+
+                    // 2. AI picks ideal targets and writes personalized messages
+                    const targets = await getSmartBroadcastTargets(offerText, customers);
+                    if (targets.length === 0) {
+                        await sock.sendMessage(remoteJid, { text: '🤔 AI walata suitble customers nema denna munawei. Offer eka wenas karala try karanna.' });
+                        return;
+                    }
+
+                    // 3. Save broadcast record
+                    const broadcast = await saveBroadcast(offerText, targets.length);
+
+                    await sock.sendMessage(remoteJid, { text: `✅ AI ${targets.length} ideal customers select kala!
+
+📤 Messages yawanna patan gannawa...` });
+
+                    // 4. Send personalized messages with delay (avoid spam block)
+                    let sentCount = 0;
+                    for (const target of targets) {
+                        try {
+                            const targetJid = `${target.phone_number}@s.whatsapp.net`;
+                            await sock.sendMessage(targetJid, { text: target.message });
+                            sentCount++;
+                            console.log(`📤 Broadcast sent to ${target.phone_number} (${sentCount}/${targets.length})`);
+                            // 3 second delay between messages to avoid WhatsApp spam detection
+                            await new Promise(resolve => setTimeout(resolve, 3000));
+                        } catch (sendErr) {
+                            console.error(`Failed to send to ${target.phone_number}:`, sendErr.message);
+                        }
+                    }
+
+                    // 5. Update broadcast status
+                    if (broadcast) await updateBroadcastStatus(broadcast.id, sentCount);
+
+                    await sock.sendMessage(remoteJid, { text: `🎉 Broadcast Complete!
+
+📊 Stats:
+• Targeted: ${targets.length} customers
+• Successfully sent: ${sentCount}
+• Offer: "${offerText}"` });
+
+                } catch (err) {
+                    console.error('Broadcast error:', err);
+                    await sock.sendMessage(remoteJid, { text: '❌ Broadcast eke error ekak una. Logs balanna.' });
+                }
+                return; // Don't process as normal message
+            }
+
+            if (text === '!help') {
+                await sock.sendMessage(remoteJid, { text: `🤖 Admin Commands:
+
+!broadcast <offer> - Smart broadcast to ideal customers
+   Example: !broadcast Handbag 30% off today only!
+
+!status - Bot status check` });
+                return;
+            }
+
+            if (text === '!status') {
+                const customers = await getAllCustomersWithHistory();
+                await sock.sendMessage(remoteJid, { text: `✅ Bot Online!
+📊 Total customers: ${customers.length}
+⏰ Time: ${new Date().toLocaleString('en-LK', { timeZone: 'Asia/Colombo' })}` });
+                return;
+            }
+        }
+        // ====== END ADMIN COMMANDS ======
+
+        console.log(`Received message from ${phoneNumber}`);
         
         // Check if user is muted (handed over to human)
         if (mutedUsers.has(phoneNumber)) {
@@ -102,10 +191,6 @@ async function connectToWhatsApp() {
                 mutedUsers.delete(phoneNumber); // Mute expired
             }
         }
-
-        // Extract text depending on message type
-        let text = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
-        console.log(`Received message from ${phoneNumber}`);
 
         try {
             // 1. Immediately mark message as read (Blue tick) and show typing
