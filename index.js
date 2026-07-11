@@ -28,7 +28,9 @@ async function connectToWhatsApp() {
     const sock = makeWASocket({
         auth: state,
         printQRInTerminal: false, // Turn off default to use custom
-        logger: pino({ level: 'silent' }) // change to 'info' for debug logs
+        logger: pino({ level: 'silent' }), // change to 'info' for debug logs
+        markOnlineOnConnect: true, // Show bot as online on WhatsApp
+        generateHighQualityLinkPreview: true,
     });
 
     sock.ev.on('creds.update', saveCreds);
